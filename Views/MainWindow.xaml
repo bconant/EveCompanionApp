@@ -1,0 +1,736 @@
+<Window x:Class="EveCompanionApp.Views.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:EveCompanionApp.ViewModels"
+        xmlns:views="clr-namespace:EveCompanionApp.Views"
+        xmlns:conv="clr-namespace:EveCompanionApp.Converters"
+        mc:Ignorable="d"
+        d:DataContext="{d:DesignInstance Type=vm:MainViewModel}"
+        Title="EVE Companion"
+        Width="1340" Height="860" MinWidth="480" MinHeight="600"
+        WindowStartupLocation="CenterScreen"
+        Topmost="{Binding IsPinned}"
+        Background="{StaticResource BackgroundBrush}"
+        Foreground="{StaticResource TextBrush}"
+        FontFamily="Segoe UI" FontSize="13">
+
+    <Window.Resources>
+        <!-- Width breakpoints; updated from code-behind on resize -->
+        <views:LayoutState x:Key="Layout" />
+
+        <conv:IskConverter x:Key="IskConverter" />
+        <conv:NormalizedPointsConverter x:Key="NormalizedPointsConverter" />
+
+        <!-- Metric cards: equal height so wrapped rows line up -->
+        <Style x:Key="MetricCardStyle" TargetType="Border" BasedOn="{StaticResource CardStyle}">
+            <Setter Property="Margin" Value="6,0,6,12" />
+            <Setter Property="Height" Value="108" />
+        </Style>
+        <!-- Shrinks long values to fit narrow cards instead of clipping them -->
+        <Style x:Key="MetricValueBoxStyle" TargetType="Viewbox">
+            <Setter Property="StretchDirection" Value="DownOnly" />
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+        </Style>
+        <Style x:Key="MetricSubStyle" TargetType="TextBlock" BasedOn="{StaticResource StatSubStyle}">
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+        </Style>
+
+        <!-- Wide: side-by-side panels. Compact (narrow / portrait): stacked. -->
+        <Style x:Key="WideSpacerColumnStyle" TargetType="ColumnDefinition">
+            <Setter Property="Width" Value="16" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                    <Setter Property="Width" Value="0" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="CompactSpacerRowStyle" TargetType="RowDefinition">
+            <Setter Property="Height" Value="0" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                    <Setter Property="Height" Value="16" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="WideFillRowStyle" TargetType="RowDefinition">
+            <Setter Property="Height" Value="*" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                    <Setter Property="Height" Value="Auto" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <Style x:Key="CompactFillRowStyle" TargetType="RowDefinition">
+            <Setter Property="Height" Value="Auto" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                    <Setter Property="Height" Value="*" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+        <!-- The feed's weapon column is the first thing dropped when space runs out -->
+        <Style x:Key="WeaponColumnStyle" TargetType="ColumnDefinition">
+            <Setter Property="Width" Value="2*" />
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding ShowWeaponColumn, Source={StaticResource Layout}}" Value="False">
+                    <Setter Property="Width" Value="0" />
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- Per-character DPS card: translucent so it reads over anything behind it -->
+        <DataTemplate x:Key="CharacterDpsCardTemplate" DataType="{x:Type vm:CharacterDpsViewModel}">
+            <Border Background="{StaticResource TelemetryCardBrush}" BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1" CornerRadius="8" Padding="12,10" Margin="0,0,0,10">
+                <StackPanel>
+                    <DockPanel Margin="0,0,0,8">
+                        <TextBlock DockPanel.Dock="Right" FontSize="11" VerticalAlignment="Center" Foreground="{StaticResource TextMutedBrush}"
+                                   ToolTip="Best 5-second outgoing / worst 5-second incoming DPS since the last clear">
+                            <Run Text="peak " /><Run Text="{Binding PeakOutgoingDps, Mode=OneWay, StringFormat={}{0:N0}}" Foreground="{StaticResource OutgoingNeonBrush}" /><Run Text=" / " /><Run Text="{Binding PeakIncomingDps, Mode=OneWay, StringFormat={}{0:N0}}" Foreground="{StaticResource IncomingNeonBrush}" />
+                        </TextBlock>
+                        <TextBlock Text="{Binding CharacterName}" FontSize="14" FontWeight="Bold" Foreground="{StaticResource CharacterBrush}" TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+
+                    <!-- 30-second graph of 5-second DPS: newest on the right, shared Y scale -->
+                    <Border Height="96" Background="{StaticResource GraphBackgroundBrush}" BorderBrush="{StaticResource GraphGridBrush}"
+                            BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+                        <Grid>
+                            <UniformGrid Rows="4" IsHitTestVisible="False">
+                                <Border BorderBrush="{StaticResource GraphGridBrush}" BorderThickness="0,0,0,1" />
+                                <Border BorderBrush="{StaticResource GraphGridBrush}" BorderThickness="0,0,0,1" />
+                                <Border BorderBrush="{StaticResource GraphGridBrush}" BorderThickness="0,0,0,1" />
+                            </UniformGrid>
+
+                            <Canvas Margin="0,4,0,0">
+                                <Polygon Fill="{StaticResource OutgoingFillBrush}" IsHitTestVisible="False">
+                                    <Polygon.Points>
+                                        <MultiBinding Converter="{StaticResource NormalizedPointsConverter}" ConverterParameter="Area">
+                                            <Binding Path="OutgoingGraphPoints" />
+                                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Canvas}" />
+                                            <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Canvas}" />
+                                        </MultiBinding>
+                                    </Polygon.Points>
+                                </Polygon>
+                                <Polyline Stroke="{StaticResource IncomingNeonBrush}" StrokeThickness="2" StrokeLineJoin="Round" IsHitTestVisible="False">
+                                    <Polyline.Points>
+                                        <MultiBinding Converter="{StaticResource NormalizedPointsConverter}">
+                                            <Binding Path="IncomingGraphPoints" />
+                                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Canvas}" />
+                                            <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Canvas}" />
+                                        </MultiBinding>
+                                    </Polyline.Points>
+                                    <Polyline.Effect>
+                                        <DropShadowEffect Color="{StaticResource IncomingNeonColor}" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
+                                    </Polyline.Effect>
+                                </Polyline>
+                                <Polyline Stroke="{StaticResource OutgoingNeonBrush}" StrokeThickness="2" StrokeLineJoin="Round" IsHitTestVisible="False">
+                                    <Polyline.Points>
+                                        <MultiBinding Converter="{StaticResource NormalizedPointsConverter}">
+                                            <Binding Path="OutgoingGraphPoints" />
+                                            <Binding Path="ActualWidth" RelativeSource="{RelativeSource AncestorType=Canvas}" />
+                                            <Binding Path="ActualHeight" RelativeSource="{RelativeSource AncestorType=Canvas}" />
+                                        </MultiBinding>
+                                    </Polyline.Points>
+                                    <Polyline.Effect>
+                                        <DropShadowEffect Color="{StaticResource OutgoingNeonColor}" BlurRadius="8" ShadowDepth="0" Opacity="0.8" />
+                                    </Polyline.Effect>
+                                </Polyline>
+                            </Canvas>
+
+                            <TextBlock Text="{Binding GraphMaxDps, StringFormat={}{0:N0} DPS}" FontSize="10" Foreground="{StaticResource TextMutedBrush}"
+                                       HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4,1,0,0" IsHitTestVisible="False" />
+                            <TextBlock Text="−30s" FontSize="10" Foreground="{StaticResource TextMutedBrush}"
+                                       HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="4,0,0,1" IsHitTestVisible="False" />
+                            <TextBlock Text="now" FontSize="10" Foreground="{StaticResource TextMutedBrush}"
+                                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,4,1" IsHitTestVisible="False" />
+                        </Grid>
+                    </Border>
+
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}" Margin="0,8,0,0">
+                        <StackPanel TextElement.FontFamily="Consolas" TextElement.FontSize="13" TextElement.FontWeight="Bold">
+                            <TextBlock Foreground="{StaticResource OutgoingNeonBrush}">
+                                <Run Text="OUT: [5s: " /><Run Text="{Binding OutgoingDps5s, Mode=OneWay, StringFormat={}{0:N0}}" /><Run Text=" DPS | 30s: " /><Run Text="{Binding OutgoingDps30s, Mode=OneWay, StringFormat={}{0:N0}}" /><Run Text=" DPS]" />
+                            </TextBlock>
+                            <TextBlock Foreground="{StaticResource IncomingNeonBrush}">
+                                <Run Text="IN:  [5s: " /><Run Text="{Binding IncomingDps5s, Mode=OneWay, StringFormat={}{0:N0}}" /><Run Text=" DPS | 30s: " /><Run Text="{Binding IncomingDps30s, Mode=OneWay, StringFormat={}{0:N0}}" /><Run Text=" DPS]" />
+                            </TextBlock>
+                        </StackPanel>
+                    </Viewbox>
+                </StackPanel>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header: title + log folder controls; controls wrap under the title when narrow -->
+        <DockPanel Grid.Row="0" Margin="0,0,0,4">
+            <StackPanel VerticalAlignment="Center" Margin="0,0,24,8">
+                <StackPanel.Style>
+                    <Style TargetType="StackPanel">
+                        <Setter Property="DockPanel.Dock" Value="Left" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                                <Setter Property="DockPanel.Dock" Value="Top" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </StackPanel.Style>
+                <TextBlock FontSize="22" FontWeight="Bold">
+                    <Run Text="EVE" Foreground="{StaticResource AccentBrush}" /><Run Text=" COMPANION" />
+                </TextBlock>
+                <TextBlock Text="Live combat log · rolling DPS · spawn alerts" Style="{StaticResource StatSubStyle}" />
+            </StackPanel>
+
+            <WrapPanel VerticalAlignment="Center">
+                <WrapPanel.Style>
+                    <Style TargetType="WrapPanel">
+                        <Setter Property="HorizontalAlignment" Value="Right" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                                <Setter Property="HorizontalAlignment" Value="Left" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </WrapPanel.Style>
+                <TextBox Width="420" Margin="0,0,8,8"
+                         Text="{Binding LogDirectory, UpdateSourceTrigger=PropertyChanged}"
+                         IsReadOnly="{Binding IsMonitoring}"
+                         ToolTip="Folder containing EVE game logs (Documents\EVE\logs\Gamelogs)" />
+                <StackPanel Orientation="Horizontal" Margin="0,0,16,8">
+                    <Button Content="Browse…" Command="{Binding SelectLogDirectoryCommand}" />
+                    <Button Content="Start" Command="{Binding StartMonitoringCommand}" Style="{StaticResource AccentButtonStyle}" Margin="8,0,0,0" MinWidth="72" />
+                    <Button Content="Stop" Command="{Binding StopMonitoringCommand}" Style="{StaticResource DangerButtonStyle}" Margin="8,0,0,0" MinWidth="72" />
+                    <Button Content="Clear" Command="{Binding ClearStatsCommand}" Margin="8,0,0,0" />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <ToggleButton Content="🔔 Sound" IsChecked="{Binding IsAlertSoundEnabled}"
+                                  ToolTip="Play an alarm when a rare spawn is seen" />
+                    <ToggleButton Content="📌 Pin" IsChecked="{Binding IsPinned}" Margin="8,0,0,0"
+                                  ToolTip="Keep this window on top of the game" />
+                </StackPanel>
+            </WrapPanel>
+        </DockPanel>
+
+        <!-- Status bar: fields wrap onto extra lines when narrow -->
+        <Border Grid.Row="1" Style="{StaticResource CardStyle}" Padding="12,6" Margin="0,0,0,12">
+            <WrapPanel>
+                <WrapPanel.Resources>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="Margin" Value="0,2,20,2" />
+                        <Setter Property="VerticalAlignment" Value="Center" />
+                        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                    </Style>
+                </WrapPanel.Resources>
+
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="0,2,20,2">
+                    <Ellipse Width="10" Height="10" Margin="0,0,8,0">
+                        <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="{StaticResource DangerBrush}" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsMonitoring}" Value="True">
+                                        <Setter Property="Fill" Value="{StaticResource SuccessBrush}" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Ellipse.Style>
+                    </Ellipse>
+                    <TextBlock Text="{Binding StatusMessage}" FontWeight="SemiBold" MaxWidth="320" Margin="0" ToolTip="{Binding StatusMessage}" />
+                </StackPanel>
+
+                <TextBlock MaxWidth="360" ToolTip="{Binding LogDirectory}">
+                    <Run Text="Directory " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding LogDirectory, Mode=OneWay}" />
+                </TextBlock>
+                <TextBlock MaxWidth="360" ToolTip="{Binding MonitoredFilePath}">
+                    <Run Text="Files " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding MonitoredFilePath, Mode=OneWay, TargetNullValue=—}" />
+                </TextBlock>
+                <TextBlock>
+                    <Run Text="Pilots " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding ActiveCharacters, Mode=OneWay, TargetNullValue=—}" Foreground="{StaticResource CharacterBrush}" />
+                </TextBlock>
+                <TextBlock>
+                    <Run Text="System " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding CurrentSystem, Mode=OneWay}" />
+                </TextBlock>
+                <TextBlock>
+                    <Run Text="Lines " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding LinesProcessed, Mode=OneWay, StringFormat={}{0:N0}}" />
+                </TextBlock>
+            </WrapPanel>
+        </Border>
+
+        <!-- Rare spawn banner: shown until dismissed, pulses to catch the eye -->
+        <Border Grid.Row="2" CornerRadius="8" Padding="16,10" Margin="0,0,0,12"
+                Background="#3A1F24" BorderBrush="{StaticResource DangerBrush}" BorderThickness="2">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ActiveAlert}" Value="{x:Null}">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Text="⚠ RARE SPAWN" FontSize="20" FontWeight="Bold" Foreground="{StaticResource DangerBrush}" VerticalAlignment="Center" Margin="0,0,20,0">
+                    <TextBlock.Triggers>
+                        <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+                            <BeginStoryboard>
+                                <Storyboard>
+                                    <DoubleAnimation Storyboard.TargetProperty="Opacity" From="1" To="0.25" Duration="0:0:0.6"
+                                                     AutoReverse="True" RepeatBehavior="Forever" />
+                                </Storyboard>
+                            </BeginStoryboard>
+                        </EventTrigger>
+                    </TextBlock.Triggers>
+                </TextBlock>
+
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding ActiveAlert.NpcName}" FontSize="18" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Foreground="{StaticResource TextMutedBrush}" TextTrimming="CharacterEllipsis">
+                        <Run Text="{Binding ActiveAlert.Type, Mode=OneWay}" Foreground="{StaticResource DangerBrush}" /><Run Text=" · seen by " /><Run Text="{Binding ActiveAlert.Character, Mode=OneWay}" Foreground="{StaticResource CharacterBrush}" /><Run Text=" at " /><Run Text="{Binding ActiveAlert.Timestamp, Mode=OneWay, StringFormat={}{0:HH:mm:ss}}" /><Run Text=" EVE" />
+                    </TextBlock>
+                </StackPanel>
+
+                <Button Grid.Column="2" Content="Dismiss" Command="{Binding DismissAlertCommand}" Style="{StaticResource DangerButtonStyle}" VerticalAlignment="Center" Margin="12,0,0,0" />
+            </Grid>
+        </Border>
+
+        <!-- Metric cards: 8, 4 or 2 per row depending on width; values shrink rather than clip -->
+        <WrapPanel x:Name="MetricsPanel" Grid.Row="3" Margin="-6,0,-6,0"
+                   ItemWidth="{Binding MetricItemWidth, Source={StaticResource Layout}}">
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="CURRENT DPS" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding CurrentDps, StringFormat={}{0:N1}}" Style="{StaticResource StatValueStyle}" FontSize="32" Foreground="{StaticResource AccentBrush}" />
+                    </Viewbox>
+                    <TextBlock Text="5-second rolling window" Style="{StaticResource MetricSubStyle}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="30s DPS" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding Dps30Seconds, StringFormat={}{0:N1}}" Style="{StaticResource StatValueStyle}" />
+                    </Viewbox>
+                    <TextBlock Text="30-second rolling window" Style="{StaticResource MetricSubStyle}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="COMBAT DPS" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding CombatDps, StringFormat={}{0:N1}}" Style="{StaticResource StatValueStyle}" />
+                    </Viewbox>
+                    <TextBlock Text="total ÷ time in combat" Style="{StaticResource MetricSubStyle}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="PEAK DPS" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding PeakDps, StringFormat={}{0:N1}}" Style="{StaticResource StatValueStyle}" />
+                    </Viewbox>
+                    <TextBlock Text="best 5s window since clear" Style="{StaticResource MetricSubStyle}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="DAMAGE DEALT" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding TotalDamageDealt, StringFormat={}{0:N0}}" Style="{StaticResource StatValueStyle}" />
+                    </Viewbox>
+                    <TextBlock Style="{StaticResource MetricSubStyle}">
+                        <TextBlock.ToolTip>
+                            <TextBlock>
+                                <Run Text="{Binding TotalDamageTaken, Mode=OneWay, StringFormat={}{0:N0}}" /><Run Text=" damage taken · " /><Run Text="{Binding IncomingDps, Mode=OneWay, StringFormat={}{0:N1}}" /><Run Text=" incoming DPS (5s)" />
+                            </TextBlock>
+                        </TextBlock.ToolTip>
+                        <Run Text="{Binding TotalDamageTaken, Mode=OneWay, StringFormat={}{0:N0}}" Foreground="{StaticResource DangerBrush}" /><Run Text=" taken · " /><Run Text="{Binding IncomingDps, Mode=OneWay, StringFormat={}{0:N1}}" Foreground="{StaticResource DangerBrush}" /><Run Text=" in DPS" />
+                    </TextBlock>
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}" ToolTip="{Binding MaxHitDetail, TargetNullValue='No outgoing hits yet'}">
+                <StackPanel>
+                    <TextBlock Text="MAX HIT" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding MaxHit, StringFormat={}{0:N0}}" Style="{StaticResource StatValueStyle}" Foreground="{StaticResource WrecksBrush}" />
+                    </Viewbox>
+                    <TextBlock Text="{Binding MaxHitDetail, TargetNullValue='largest single hit'}" Style="{StaticResource MetricSubStyle}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <StackPanel>
+                    <TextBlock Text="KILLS" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding Kills, StringFormat={}{0:N0}}" Style="{StaticResource StatValueStyle}" />
+                    </Viewbox>
+                    <TextBlock Text="fleet de-duplicated" Style="{StaticResource MetricSubStyle}" />
+                </StackPanel>
+            </Border>
+            <Border Style="{StaticResource MetricCardStyle}">
+                <Border.ToolTip>
+                    <StackPanel>
+                        <TextBlock Text="{Binding TotalBounty, Converter={StaticResource IskConverter}, ConverterParameter=Exact}" FontWeight="Bold" />
+                        <TextBlock Text="{Binding BountyBreakdown, TargetNullValue='No bounties yet'}" Margin="0,4,0,0" />
+                    </StackPanel>
+                </Border.ToolTip>
+                <StackPanel>
+                    <TextBlock Text="BOUNTY" Style="{StaticResource StatLabelStyle}" />
+                    <Viewbox Style="{StaticResource MetricValueBoxStyle}">
+                        <TextBlock Text="{Binding TotalBounty, Converter={StaticResource IskConverter}}" Style="{StaticResource StatValueStyle}" Foreground="{StaticResource SuccessBrush}" />
+                    </Viewbox>
+                    <TextBlock Text="{Binding IskPerHour, Converter={StaticResource IskConverter}, ConverterParameter=PerHour}" Style="{StaticResource MetricSubStyle}"
+                               ToolTip="Bounty rate; shown after 5 minutes of earning" />
+                </StackPanel>
+            </Border>
+        </WrapPanel>
+
+        <!-- Body: telemetry docks right when wide, on top when narrow -->
+        <Grid Grid.Row="4">
+            <Grid.RowDefinitions>
+                <RowDefinition Style="{StaticResource WideFillRowStyle}" />
+                <RowDefinition Style="{StaticResource CompactSpacerRowStyle}" />
+                <RowDefinition Style="{StaticResource CompactFillRowStyle}" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Style="{StaticResource WideSpacerColumnStyle}" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <Expander Header="CHARACTER DPS TELEMETRY">
+                <Expander.Style>
+                    <Style TargetType="Expander" BasedOn="{StaticResource PanelExpanderStyle}">
+                        <Setter Property="Grid.Column" Value="2" />
+                        <Setter Property="Width" Value="340" />
+                        <Setter Property="VerticalAlignment" Value="Stretch" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                                <Setter Property="Grid.Column" Value="0" />
+                                <Setter Property="Grid.ColumnSpan" Value="3" />
+                                <Setter Property="Width" Value="Auto" />
+                                <Setter Property="MaxHeight" Value="460" />
+                            </DataTrigger>
+                            <Trigger Property="IsExpanded" Value="False">
+                                <Setter Property="Width" Value="Auto" />
+                                <Setter Property="VerticalAlignment" Value="Top" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Expander.Style>
+
+                <Grid>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{Binding CharacterTrackers}" ItemTemplate="{StaticResource CharacterDpsCardTemplate}" />
+                    </ScrollViewer>
+                    <TextBlock Text="A card per pilot appears once their log is found. Outgoing DPS in green, incoming in red." Margin="0,12">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock" BasedOn="{StaticResource EmptyHintStyle}">
+                                <Setter Property="Visibility" Value="Collapsed" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding CharacterTrackers.Count}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+            </Expander>
+
+            <!-- Modules -->
+            <TabControl>
+                <TabControl.Style>
+                    <Style TargetType="TabControl" BasedOn="{StaticResource {x:Type TabControl}}">
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                                <Setter Property="Grid.Row" Value="2" />
+                                <Setter Property="Grid.ColumnSpan" Value="3" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </TabControl.Style>
+
+                <TabItem Header="Live Combat">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Style="{StaticResource CompactSpacerRowStyle}" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="2*" />
+                            <ColumnDefinition Style="{StaticResource WideSpacerColumnStyle}" />
+                            <ColumnDefinition>
+                                <ColumnDefinition.Style>
+                                    <Style TargetType="ColumnDefinition">
+                                        <Setter Property="Width" Value="*" />
+                                        <Setter Property="MinWidth" Value="300" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                                                <Setter Property="Width" Value="0" />
+                                                <Setter Property="MinWidth" Value="0" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ColumnDefinition.Style>
+                            </ColumnDefinition>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Live combat feed -->
+                        <Border x:Name="FeedCard" Style="{StaticResource CardStyle}" MinHeight="240">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Top" Text="LIVE COMBAT FEED" Style="{StaticResource SectionHeaderStyle}" />
+
+                                <Grid DockPanel.Dock="Top" Margin="6,0,14,6">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="68" />
+                                        <ColumnDefinition Width="100" />
+                                        <ColumnDefinition Width="22" />
+                                        <ColumnDefinition Width="3*" />
+                                        <ColumnDefinition Style="{StaticResource WeaponColumnStyle}" />
+                                        <ColumnDefinition Width="84" />
+                                        <ColumnDefinition Width="64" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="TIME" Style="{StaticResource ColumnHeaderStyle}" />
+                                    <TextBlock Grid.Column="1" Text="PILOT" Style="{StaticResource ColumnHeaderStyle}" />
+                                    <TextBlock Grid.Column="3" Text="TARGET / SOURCE" Style="{StaticResource ColumnHeaderStyle}" />
+                                    <TextBlock Grid.Column="4" Text="WEAPON" Style="{StaticResource ColumnHeaderStyle}" Margin="12,0,0,0" />
+                                    <TextBlock Grid.Column="5" Text="QUALITY" Style="{StaticResource ColumnHeaderStyle}" Margin="12,0,0,0" />
+                                    <TextBlock Grid.Column="6" Text="DAMAGE" Style="{StaticResource ColumnHeaderStyle}" HorizontalAlignment="Right" />
+                                </Grid>
+
+                                <Grid>
+                                    <ListView ItemsSource="{Binding RecentHits}">
+                                        <ListView.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="68" />
+                                                        <ColumnDefinition Width="100" />
+                                                        <ColumnDefinition Width="22" />
+                                                        <ColumnDefinition Width="3*" />
+                                                        <ColumnDefinition Style="{StaticResource WeaponColumnStyle}" />
+                                                        <ColumnDefinition Width="84" />
+                                                        <ColumnDefinition Width="64" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Text="{Binding Timestamp, StringFormat={}{0:HH:mm:ss}}" Foreground="{StaticResource TextMutedBrush}" FontFamily="Consolas" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Character}" Foreground="{StaticResource CharacterBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+
+                                                    <TextBlock Grid.Column="2" HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Text" Value="◀" />
+                                                                <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                                <Setter Property="ToolTip" Value="Incoming" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsOutgoing}" Value="True">
+                                                                        <Setter Property="Text" Value="▶" />
+                                                                        <Setter Property="Foreground" Value="{StaticResource SuccessBrush}" />
+                                                                        <Setter Property="ToolTip" Value="Outgoing" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+
+                                                    <!-- Weapon in the tooltip too, since its column is hidden when narrow -->
+                                                    <TextBlock Grid.Column="3" Text="{Binding Target}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding Weapon}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsRareSpawn}" Value="True">
+                                                                        <Setter Property="Foreground" Value="{StaticResource DangerBrush}" />
+                                                                        <Setter Property="FontWeight" Value="Bold" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBlock Grid.Column="4" Text="{Binding Weapon}" Foreground="{StaticResource TextMutedBrush}" Margin="12,0,0,0" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="{Binding Weapon}" />
+                                                    <TextBlock Grid.Column="5" Text="{Binding HitQuality}" Foreground="{StaticResource TextMutedBrush}" Margin="12,0,0,0" VerticalAlignment="Center" />
+
+                                                    <Border Grid.Column="6" CornerRadius="4" Padding="6,1" MinWidth="52" HorizontalAlignment="Right">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border">
+                                                                <Setter Property="Background" Value="{StaticResource HitsBrush}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding HitQuality}" Value="Grazes">
+                                                                        <Setter Property="Background" Value="{StaticResource GrazesBrush}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding HitQuality}" Value="Glances Off">
+                                                                        <Setter Property="Background" Value="{StaticResource GlancesOffBrush}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding HitQuality}" Value="Penetrates">
+                                                                        <Setter Property="Background" Value="{StaticResource PenetratesBrush}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding HitQuality}" Value="Smashes">
+                                                                        <Setter Property="Background" Value="{StaticResource SmashesBrush}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding HitQuality}" Value="Wrecks">
+                                                                        <Setter Property="Background" Value="{StaticResource WrecksBrush}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding Damage, StringFormat={}{0:N0}}" Foreground="{StaticResource BadgeTextBrush}" FontFamily="Consolas" FontWeight="Bold" HorizontalAlignment="Center" />
+                                                    </Border>
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ListView.ItemTemplate>
+                                    </ListView>
+
+                                    <TextBlock Text="No combat yet. Press Start, then shoot something.">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock" BasedOn="{StaticResource EmptyHintStyle}">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding RecentHits.Count}" Value="0">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                            </DockPanel>
+                        </Border>
+
+                        <!-- Alerts + quick reference: right column when wide, below the feed when narrow -->
+                        <Grid>
+                            <Grid.Style>
+                                <Style TargetType="Grid">
+                                    <Setter Property="Grid.Column" Value="2" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsCompact, Source={StaticResource Layout}}" Value="True">
+                                            <Setter Property="Grid.Column" Value="0" />
+                                            <Setter Property="Grid.ColumnSpan" Value="3" />
+                                            <Setter Property="Grid.Row" Value="2" />
+                                            <Setter Property="Height" Value="460" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Grid.Style>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="16" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+
+                            <Border Style="{StaticResource CardStyle}" BorderBrush="{StaticResource DangerBrush}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="RARE SPAWN ALERTS" Style="{StaticResource SectionHeaderStyle}" Foreground="{StaticResource DangerBrush}" />
+                                    <Grid>
+                                        <ListBox ItemsSource="{Binding SpawnAlerts}">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="4" />
+                                                            <ColumnDefinition Width="*" />
+                                                            <ColumnDefinition Width="Auto" />
+                                                        </Grid.ColumnDefinitions>
+                                                        <Grid.Style>
+                                                            <Style TargetType="Grid">
+                                                                <Setter Property="Tag" Value="{StaticResource DangerBrush}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Type}" Value="Officer">
+                                                                        <Setter Property="Tag" Value="{StaticResource CriticalBrush}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Type}" Value="Drifter">
+                                                                        <Setter Property="Tag" Value="{StaticResource WarningBrush}" />
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding Type}" Value="Sleeper">
+                                                                        <Setter Property="Tag" Value="{StaticResource SleeperBrush}" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Grid.Style>
+
+                                                        <Border Background="{Binding Tag, RelativeSource={RelativeSource AncestorType=Grid}}" CornerRadius="2" />
+                                                        <StackPanel Grid.Column="1" Margin="10,2,0,2">
+                                                            <TextBlock Text="{Binding NpcName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                            <TextBlock FontSize="11">
+                                                                <Run Text="{Binding Type, Mode=OneWay}" Foreground="{Binding Tag, RelativeSource={RelativeSource AncestorType=Grid}}" /><Run Text=" · " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding Character, Mode=OneWay}" Foreground="{StaticResource CharacterBrush}" />
+                                                            </TextBlock>
+                                                        </StackPanel>
+                                                        <TextBlock Grid.Column="2" Text="{Binding Timestamp, StringFormat={}{0:HH:mm:ss}}" Foreground="{StaticResource TextMutedBrush}" FontFamily="Consolas" VerticalAlignment="Center" />
+                                                    </Grid>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+
+                                        <TextBlock Text="Faction, officer, Drifter and Sleeper NPCs you engage show up here.">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource EmptyHintStyle}">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SpawnAlerts.Count}" Value="0">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </DockPanel>
+                            </Border>
+
+                            <Border Grid.Row="2" Style="{StaticResource CardStyle}">
+                                <DockPanel>
+                                    <TextBlock DockPanel.Dock="Top" Text="QUICK REFERENCE · NPC DAMAGE" Style="{StaticResource SectionHeaderStyle}" />
+                                    <TextBox DockPanel.Dock="Top" Margin="0,0,0,10"
+                                             Text="{Binding ReferenceFilter, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Filter by faction or damage type" />
+                                    <ListBox ItemsSource="{Binding FilteredFactions}">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel Margin="0,2">
+                                                    <TextBlock Text="{Binding Faction}" FontWeight="SemiBold" />
+                                                    <TextBlock FontSize="12" TextWrapping="Wrap">
+                                                        <Run Text="Deals " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding DamageDealt, Mode=OneWay}" Foreground="{StaticResource DangerBrush}" />
+                                                        <Run Text=" · Weak to " Foreground="{StaticResource TextMutedBrush}" /><Run Text="{Binding WeakTo, Mode=OneWay}" Foreground="{StaticResource SuccessBrush}" />
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding Notes}" FontSize="11" Foreground="{StaticResource TextMutedBrush}" TextWrapping="Wrap" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                </DockPanel>
+                            </Border>
+                        </Grid>
+                    </Grid>
+                </TabItem>
+
+                <TabItem Header="Sleeper Wave Triggers">
+                    <Border Style="{StaticResource CardStyle}">
+                        <TextBlock Text="Sleeper wave trigger tracking — reserved for a future module." Style="{StaticResource EmptyHintStyle}" />
+                    </Border>
+                </TabItem>
+
+                <TabItem Header="Manufacturing">
+                    <Border Style="{StaticResource CardStyle}">
+                        <TextBlock Text="Manufacturing tools — reserved for a future module." Style="{StaticResource EmptyHintStyle}" />
+                    </Border>
+                </TabItem>
+            </TabControl>
+        </Grid>
+    </Grid>
+</Window>

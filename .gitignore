@@ -1,0 +1,14 @@
+# Build output
+bin/
+obj/
+publish/
+
+# IDE / user state
+.vs/
+.vscode/
+*.user
+*.suo
+
+# EVE game logs (contain character names and activity)
+Gamelogs/
+*.log
